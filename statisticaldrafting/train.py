@@ -15,14 +15,17 @@ from torch.utils.data import DataLoader
 import statisticaldrafting as sd
 
 
-def evaluate_model(val_dataloader, network):
+def evaluate_model(val_dataloader, network, device=None):
     """
     Evaluate model pick accuracy on validation dataset.
     """
+    if device is None:
+        device = next(network.parameters()).device
     # Count number correct picks.
     num_correct, num_incorrect = 0, 0
     for pool, pack, human_pick_vector in val_dataloader:  # Assumes batch size of 1.
         # TODO: vectorize for performance.
+        pool, pack, human_pick_vector = pool.to(device), pack.to(device), human_pick_vector.to(device)
         human_pick_index = torch.argmax(human_pick_vector.int(), 1)
         network.eval()
         with torch.no_grad():
@@ -50,14 +53,19 @@ def train_model(
     """
     Train and evaluate model.
     """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    network = network.to(device)
+
     # Optimizer parameters.
-    # loss_fn = torch.nn.CrossEntropyLoss() # Previous implementation. 
+    # loss_fn = torch.nn.CrossEntropyLoss() # Previous implementation.
     loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
     optimizer = optim.Adam(network.parameters(), lr=learning_rate) # , weight_decay=1e-5)
 
     # Initial evaluation.
     print(f"Starting to train model. learning_rate={learning_rate}")
-    best_percent_correct, best_epoch = evaluate_model(val_dataloader, network), 0
+    best_percent_correct, best_epoch = evaluate_model(val_dataloader, network, device), 0
+    weights_path = model_folder + experiment_name + ".pt"
 
     # Train model.
     t0 = time.time()
@@ -69,6 +77,7 @@ def train_model(
         epoch_training_loss = list()
         print(f"\nStarting epoch {epoch}  lr={round(scheduler.get_last_lr()[0], 5)}")
         for i, (pool, pack, pick_vector) in enumerate(train_dataloader):
+            pool, pack, pick_vector = pool.to(device), pack.to(device), pick_vector.to(device)
             optimizer.zero_grad()
             predicted_pick = network(pool.float(), pack.float())
             
@@ -87,7 +96,7 @@ def train_model(
             prediction_rarities = [rarities[i] for i in torch.argmax(predicted_pick, dim=1).tolist()]
             pick_rarities = [rarities[i] for i in torch.argmax(pick_vector.int(), dim=1).tolist()]
             is_raredraft = [(pick in ["common", "uncommon"]) and (pred not in ["common", "uncommon"]) for pick, pred in zip(pick_rarities, prediction_rarities)]
-            raredraft_weight = torch.Tensor([3 if rd else 1 for rd in is_raredraft]) # Raredraft penalty here. 
+            raredraft_weight = torch.Tensor([3 if rd else 1 for rd in is_raredraft]).to(device) # Raredraft penalty here.
             weighted_loss = loss_per_example * raredraft_weight
             final_loss = weighted_loss.mean()
             final_loss.backward()
@@ -108,7 +117,7 @@ def train_model(
         if epoch % 2 == 0 and epoch > 0:
             # Evaluation.
             network = network.eval()
-            percent_correct = evaluate_model(val_dataloader, network)
+            percent_correct = evaluate_model(val_dataloader, network, device)
 
             # Save best model.
             if percent_correct > best_percent_correct:

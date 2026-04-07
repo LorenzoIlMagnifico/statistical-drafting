@@ -462,5 +462,29 @@
     "validation_accuracy": 70.74598998557244,
     "num_epochs": 68,
     "training_date": "2026-03-20 17:58:10"
+  },
+  {
+    "experiment_name": "TMT_Premier",
+    "training_picks": 56,
+    "validation_picks": 14,
+    "validation_accuracy": 21.428571428571427,
+    "num_epochs": 4,
+    "training_date": "2026-04-07 17:37:06"
+  },
+  {
+    "experiment_name": "TMT_Premier",
+    "training_picks": 4900,
+    "validation_picks": 1227,
+    "validation_accuracy": 60.63569682151589,
+    "num_epochs": 86,
+    "training_date": "2026-04-07 17:38:54"
+  },
+  {
+    "experiment_name": "TMT_Premier",
+    "training_picks": 46973,
+    "validation_picks": 11783,
+    "validation_accuracy": 71.16184333361623,
+    "num_epochs": 56,
+    "training_date": "2026-04-07 18:44:11"
   }
 ]
