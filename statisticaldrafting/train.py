@@ -1,3 +1,4 @@
+import sys
 import time
 import warnings
 import json
@@ -23,13 +24,13 @@ def evaluate_model(val_dataloader, network, device=None):
         device = next(network.parameters()).device
     # Count number correct picks.
     num_correct, num_incorrect = 0, 0
-    for pool, pack, human_pick_vector in val_dataloader:  # Assumes batch size of 1.
+    for pool, pack, human_pick_vector, position, missing in val_dataloader:  # Assumes batch size of 1.
         # TODO: vectorize for performance.
-        pool, pack, human_pick_vector = pool.to(device), pack.to(device), human_pick_vector.to(device)
+        pool, pack, human_pick_vector, position, missing = pool.to(device), pack.to(device), human_pick_vector.to(device), position.to(device), missing.to(device)
         human_pick_index = torch.argmax(human_pick_vector.int(), 1)
         network.eval()
         with torch.no_grad():
-            bot_pick_vector = network(pool.float(), pack.float())
+            bot_pick_vector = network(pool.float(), pack.float(), position.float(), missing.float())
             bot_picks_index = torch.argmax(bot_pick_vector, 1)
         if torch.equal(human_pick_index, bot_picks_index):
             num_correct += 1
@@ -76,10 +77,10 @@ def train_model(
         network.train()
         epoch_training_loss = list()
         print(f"\nStarting epoch {epoch}  lr={round(scheduler.get_last_lr()[0], 5)}")
-        for i, (pool, pack, pick_vector) in enumerate(train_dataloader):
-            pool, pack, pick_vector = pool.to(device), pack.to(device), pick_vector.to(device)
+        for i, (pool, pack, pick_vector, position, missing) in enumerate(train_dataloader):
+            pool, pack, pick_vector, position, missing = pool.to(device), pack.to(device), pick_vector.to(device), position.to(device), missing.to(device)
             optimizer.zero_grad()
-            predicted_pick = network(pool.float(), pack.float())
+            predicted_pick = network(pool.float(), pack.float(), position.float(), missing.float())
             
             # Previous implementation. 
             # loss = loss_fn(predicted_pick, pick_vector.float())
@@ -129,7 +130,8 @@ def train_model(
                 print(f"Saving model weights to {weights_path}")
                 torch.save(network.state_dict(), weights_path)
         epoch += 1
-        scheduler.step() # Update learning rate. 
+        scheduler.step() # Update learning rate.
+        sys.stdout.flush()
     print(f"Training complete for {weights_path}. Best performance={round(best_percent_correct, 2)}% Time={round(time.time()-t0)} seconds\n")
     
     # Return training information dictionary
@@ -171,10 +173,10 @@ def _log_training_info(training_info: dict) -> None:
         with open(logs_path, 'w') as f:
             json.dump(logs, f, indent=2)
         
-        print(f"📝 Training log saved to {logs_path}")
+        print(f"Training log saved to {logs_path}")
         
     except Exception as e:
-        print(f"⚠️  Failed to save training log: {e}")
+        print(f"Failed to save training log: {e}")
 
 
 def default_training_pipeline(
@@ -182,6 +184,8 @@ def default_training_pipeline(
     draft_mode: str,
     overwrite_dataset: bool = True,
     export_onnx: bool = True,
+    top_drafters_only: bool = False,
+    model_type: str = "mlp",
 ) -> Dict:
     """
     End to end training pipeline using default values.
@@ -191,72 +195,96 @@ def default_training_pipeline(
             draft_mode (str): Use either "Premier", "Trad", "PickTwo", or "PickTwoTrad" draft data.
             overwrite_dataset (bool): If False, won't overwrite an existing dataset for the set and draft mode.
             export_onnx (bool): If True (default), export a browser-ready ONNX model alongside the .pt weights.
+            model_type (str): "mlp" for the original DraftNet, "embed" for EmbeddingDraftNet.
     """
     import sys
-    print("🔧 Step 1: Creating dataset...")
+    print("Step 1: Creating dataset...")
     sys.stdout.flush()
 
-    # Create dataset.
+    # Build model name suffix from flags.
+    model_suffix = ""
+    if top_drafters_only:
+        model_suffix += "_top3pct"
+    if model_type == "embed":
+        model_suffix += "_embed"
     train_path, val_path = sd.create_dataset(
         set_abbreviation=set_abbreviation,
         draft_mode=draft_mode,
         overwrite=overwrite_dataset,
+        top_drafters_only=top_drafters_only,
     )
 
-    print(f"🔧 Step 2: Loading datasets from {train_path} and {val_path}...")
+    print(f"Step 2: Loading datasets from {train_path} and {val_path}...")
     sys.stdout.flush()
 
     dataset_folder = "../data/training_sets/"
 
     train_dataset = torch.load(train_path, weights_only=False)
 
-    # Use smaller batch size for CI environments with limited memory
-    # Batch size reduced from 10000 to 1000 (×0.1)
     batch_size = 1000
-    # Learning rate reduced proportionally from 0.03 to 0.003 (×0.1)
     learning_rate = 0.003
 
-    print(f"🔧 Step 3: Creating train dataloader (batch_size={batch_size})...")
+    print(f"Step 3: Creating train dataloader (batch_size={batch_size})...")
     sys.stdout.flush()
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
-    print(f"🔧 Step 4: Loading validation dataset...")
+    print("Step 4: Loading validation dataset...")
     sys.stdout.flush()
 
     val_dataset = torch.load(val_path, weights_only=False)
-    print(f"🔧 Step 5: Creating validation dataloader...")
+    print("Step 5: Creating validation dataloader...")
     sys.stdout.flush()
 
     val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=0)
 
-    print(f"🔧 Step 6: Creating DraftNet model...")
+    print(f"Step 6: Creating model (type={model_type})...")
     sys.stdout.flush()
 
-    # Train network.
-    network = sd.DraftNet(cardnames=train_dataset.cardnames)
+    card_features = None
+    if model_type == "embed":
+        from statisticaldrafting.card_features import load_card_features
+        card_features = load_card_features(
+            set_abbrev=set_abbreviation,
+            draft_mode=draft_mode,
+            cardnames=train_dataset.cardnames,
+        )
+        if card_features is not None:
+            print(f"Loaded card features: {card_features.shape[1]} features per card.")
+        network = sd.EmbeddingDraftNet(
+            cardnames=train_dataset.cardnames,
+            card_features=card_features,
+        )
+    elif model_type == "mlp":
+        network = sd.DraftNet(cardnames=train_dataset.cardnames)
+    else:
+        raise ValueError(f"Unknown model_type '{model_type}'. Choose 'mlp' or 'embed'.")
 
-    print(f"🔧 Step 7: Starting model training (lr={learning_rate})...")
+    print(f"Step 7: Starting model training (lr={learning_rate})...")
     sys.stdout.flush()
 
+    experiment_name = f"{set_abbreviation}_{draft_mode}{model_suffix}"
     network, training_info = sd.train_model(
         train_dataloader,
         val_dataloader,
         network,
         learning_rate=learning_rate,
-        experiment_name=f"{set_abbreviation}_{draft_mode}",
+        experiment_name=experiment_name,
     )
 
-    model_path = f"../data/models/{set_abbreviation}_{draft_mode}.pt"
-    onnx_path = f"../data/onnx/{set_abbreviation}_{draft_mode}.onnx"
+    model_path = f"../data/models/{experiment_name}.pt"
+    onnx_path = f"../data/onnx/{experiment_name}.onnx"
 
     if export_onnx:
         os.makedirs(os.path.dirname(onnx_path), exist_ok=True)
         print(f"Exporting model to ONNX format: {onnx_path}")
+        onnx_card_features = card_features if model_type == "embed" else None
         sd.create_onnx_model(
             model_path=model_path,
             cardnames=train_dataset.cardnames,
             onnx_path=onnx_path,
+            model_type=model_type,
+            card_features=onnx_card_features,
         )
     
     # Log training information to training_logs.json

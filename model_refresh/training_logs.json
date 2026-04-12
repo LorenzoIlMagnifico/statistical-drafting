@@ -486,5 +486,37 @@
     "validation_accuracy": 71.16184333361623,
     "num_epochs": 56,
     "training_date": "2026-04-07 18:44:11"
+  },
+  {
+    "experiment_name": "FDN_Premier",
+    "training_picks": 173828,
+    "validation_picks": 43704,
+    "validation_accuracy": 71.04155226066264,
+    "num_epochs": 54,
+    "training_date": "2026-04-10 14:11:13"
+  },
+  {
+    "experiment_name": "FDN_Premier_top3pct",
+    "training_picks": 45674,
+    "validation_picks": 11622,
+    "validation_accuracy": 69.86749268628463,
+    "num_epochs": 82,
+    "training_date": "2026-04-11 09:28:55"
+  },
+  {
+    "experiment_name": "FDN_Premier_top3pct_embed",
+    "training_picks": 45674,
+    "validation_picks": 11622,
+    "validation_accuracy": 68.02615728790225,
+    "num_epochs": 66,
+    "training_date": "2026-04-11 11:42:24"
+  },
+  {
+    "experiment_name": "FDN_Premier_embed",
+    "training_picks": 173828,
+    "validation_picks": 43704,
+    "validation_accuracy": 70.08054182683507,
+    "num_epochs": 56,
+    "training_date": "2026-04-11 13:23:11"
   }
 ]

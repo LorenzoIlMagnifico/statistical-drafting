@@ -25,3 +25,6 @@ data/onnx/*.onnx
 # Ignore CI training reports
 model_refresh/training_report.json
 model_refresh/release_notes.md
+
+*.csv
+*.json

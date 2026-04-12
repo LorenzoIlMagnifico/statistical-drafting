@@ -49,18 +49,52 @@ class DraftModel:
             collection_vector[0, card_index] += 1
         return collection_vector
 
-    def get_card_ratings(self, collection: List[Union[str, int]]) -> pd.Series:
+    def get_missing_vector(self, missing_cards: List[Union[str, int]]) -> torch.Tensor:
+        """Get a missing-cards vector from a list of cardnames or card ids."""
+        missing_vector = torch.zeros([1, len(self.cardnames)])
+        for card in missing_cards:
+            if type(card) is str:
+                if card not in self.cardnames:
+                    continue
+                card_index = self.cardnames.index(card)
+            else:
+                card_index = card
+            missing_vector[0, card_index] = 1.0
+        return missing_vector
+
+    def get_card_ratings(
+        self,
+        collection: List[Union[str, int]],
+        pack_number: int = None,
+        pick_number: int = None,
+        missing_cards: List[Union[str, int]] = None,
+    ) -> pd.Series:
         """
         Get card ratings (0.0-100.0) for input collection.
+
+        pack_number: 0-2 (which booster pack). Inferred from collection size if not given.
+        pick_number: 1-14 (pick within the pack). Inferred from collection size if not given.
+        missing_cards: cards seen in prior packs of this booster but not picked (taken by others).
+            Defaults to an empty vector (no information about other drafters).
         """
         # Create collection vector.
         collection_vector = self.get_collection_vector(collection)
+
+        # Infer draft position from collection size if not explicitly provided.
+        num_picked = len(collection)
+        if pack_number is None:
+            pack_number = num_picked // 14
+        if pick_number is None:
+            pick_number = (num_picked % 14) + 1
+        position = torch.tensor([[pack_number / 2.0, pick_number / 14.0]])
+
+        missing_vector = self.get_missing_vector(missing_cards) if missing_cards else torch.zeros([1, len(self.cardnames)])
 
         # Get raw card scores.
         self.network.eval()
         with torch.no_grad():
             card_scores_torch = self.network(
-                collection_vector, torch.ones(len(self.cardnames))
+                collection_vector, torch.ones(len(self.cardnames)), position, missing_vector
             )
 
         card_score_series = pd.Series(card_scores_torch.reshape(-1), name="scores").astype("float")
